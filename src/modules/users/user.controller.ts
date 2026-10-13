@@ -16,7 +16,7 @@ import { Throttle } from '@nestjs/throttler';
 import { UsersService } from './user.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { LoginDto } from './dto/login.dto';
-import { CkanLoginDto } from './dto/ckan-login.dto';
+import { IberoLoginDto } from './dto/ibero-login.dto';
 import { JwtAuthGuard } from 'src/shared/auth/jwt-auth.guard';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { RolesGuard } from 'src/shared/auth/guards/roles.guard';
@@ -45,11 +45,11 @@ export class UsersController {
   }
 
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  @Post('ckan-sign-in')
-  ckanLogin(
-    @Body(new ValidationPipe({ expectedType: CkanLoginDto })) params: CkanLoginDto,
+  @Post('ibero-sign-in')
+  iberoLogin(
+    @Body(new ValidationPipe({ expectedType: IberoLoginDto })) params: IberoLoginDto,
   ) {
-    return this.service.ckanLogin(params);
+    return this.service.iberoLogin(params);
   }
 
   @UseGuards(JwtAuthGuard)

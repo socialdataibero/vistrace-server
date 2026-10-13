@@ -1,6 +1,7 @@
 import { BadGatewayException, BadRequestException, HttpException, Injectable, Logger } from '@nestjs/common';
 import { DuckdbService } from '../duckdb/duckdb.service';
 import { PublishAnalysisDto } from './dto/publish-analysis.dto';
+import { iberoApiUrl } from './ibero-api-url';
 
 @Injectable()
 export class IberoService {
@@ -55,7 +56,7 @@ export class IberoService {
       throw new BadRequestException('Invalid Ibero Data URL');
     }
     const normalized = url.toString().replace(/\/+$/, '');
-    const allowed = process.env.IBERO_API_URL?.replace(/\/+$/, '');
+    const allowed = iberoApiUrl();
     if (allowed && normalized !== allowed) {
       throw new BadRequestException('Ibero Data URL not allowed');
     }

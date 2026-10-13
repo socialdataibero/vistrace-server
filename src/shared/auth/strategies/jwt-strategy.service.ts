@@ -20,11 +20,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload) {
-    if (payload.source === 'ckan') {
+    if (payload.source === 'ibero') {
       return {
         username: payload.username,
         role: payload.role,
-        source: 'ckan',
+        source: 'ibero',
         isActive: true,
       };
     }

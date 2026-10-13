@@ -39,7 +39,7 @@ class ImportFromUrlDto {
 
   @IsString()
   @IsOptional()
-  ckanToken?: string;
+  downloadToken?: string;
 }
 
 @UseGuards(JwtAuthGuard)
@@ -77,7 +77,7 @@ export class TablesController {
   @Post('import-from-url')
   @HttpCode(HttpStatus.OK)
   importFromUrl(@Req() req, @Body() dto: ImportFromUrlDto) {
-    return this.duckdb.importFromUrl(dto.url, dto.tableName, dto.format ?? 'csv', dto.ckanToken, req.user.username);
+    return this.duckdb.importFromUrl(dto.url, dto.tableName, dto.format ?? 'csv', dto.downloadToken, req.user.username);
   }
 
   @Delete(':name')

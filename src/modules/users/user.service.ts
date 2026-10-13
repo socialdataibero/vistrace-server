@@ -4,7 +4,8 @@ import { Model } from "mongoose";
 import { User } from "./schemas/user.schema";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { LoginDto } from "./dto/login.dto";
-import { CkanLoginDto } from "./dto/ckan-login.dto";
+import { IberoLoginDto } from "./dto/ibero-login.dto";
+import { iberoApiUrl } from "../ibero/ibero-api-url";
 import { LoginResponse } from "./models/login-response.model";
 import { compare, hash } from "bcrypt";
 import { AuthService } from "src/shared/auth/auth.service";
@@ -118,13 +119,21 @@ export class UsersService {
     }
   }
 
-  async ckanLogin(dto: CkanLoginDto): Promise<LoginResponse> {
-    const { handoffToken, ckanUrl } = dto;
+  async iberoLogin(dto: IberoLoginDto): Promise<LoginResponse> {
+    const { handoffToken } = dto;
 
-    const base = ckanUrl.replace(/\/+$/, '');
+    // The Ibero Data URL comes from the server config, never from the client:
+    // whoever answers this endpoint decides which user gets signed in.
+    const base = iberoApiUrl();
+    if (!base) {
+      throw new HttpException(
+        { message: ['IBERO_API_URL is not configured'] },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
     const endpoint = `${base}/api/3/action/duckdb_consume_handoff`;
 
-    let ckanUser: {
+    let iberoUser: {
       username: string;
       display_name: string;
       download_token: string;
@@ -152,11 +161,11 @@ export class UsersService {
       };
 
       if (!body.success || !body.result?.username) {
-        const msg = body.error?.message ?? 'Token de CKAN inválido o expirado';
+        const msg = body.error?.message ?? 'Token de Ibero Data inválido o expirado';
         throw new HttpException({ message: [msg] }, HttpStatus.UNAUTHORIZED);
       }
 
-      ckanUser = {
+      iberoUser = {
         username: body.result.username,
         display_name: body.result.display_name,
         download_token: body.result.download_token ?? '',
@@ -166,27 +175,27 @@ export class UsersService {
     } catch (err: any) {
       if (err instanceof HttpException) throw err;
       throw new HttpException(
-        { message: ['No se pudo conectar con CKAN'] },
+        { message: ['No se pudo conectar con Ibero Data'] },
         HttpStatus.BAD_GATEWAY,
       );
     }
 
     const payload = {
-      username: ckanUser.username,
+      username: iberoUser.username,
       role: UserRoleEnum.USER,
-      source: 'ckan' as const,
+      source: 'ibero' as const,
     };
 
     const token = this._authService.signPayload(payload);
 
     return {
       token,
-      ckanDownloadToken: ckanUser.download_token,
-      iberoContext: ckanUser.ibero_context,
-      canvas: ckanUser.canvas,
+      iberoDownloadToken: iberoUser.download_token,
+      iberoContext: iberoUser.ibero_context,
+      canvas: iberoUser.canvas,
       user: {
-        username: ckanUser.username,
-        name: ckanUser.display_name || ckanUser.username,
+        username: iberoUser.username,
+        name: iberoUser.display_name || iberoUser.username,
         role: UserRoleEnum.USER,
         isActive: true,
       } as any,

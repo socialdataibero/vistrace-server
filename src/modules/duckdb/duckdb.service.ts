@@ -5,6 +5,7 @@ import * as readline from 'readline';
 import * as path from 'path';
 import { feature as topoFeature } from 'topojson-client';
 import { assertEmbeddableSql } from '../query/read-only-sql';
+import { iberoApiUrl } from '../ibero/ibero-api-url';
 
 export interface ColumnInfo {
   name: string;
@@ -443,8 +444,19 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
     return { columns: schema, rowCount: Number(countRows[0]?.['cnt'] ?? 0) };
   }
 
-  async importFromUrl(url: string, rawName: string, format: string, ckanToken?: string, username?: string): Promise<{ tableName: string; rowCount: number; skipped?: boolean }> {
-    const tableName = (rawName.replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 60) || 'ckan_data');
+  /**
+   * Only files served by the configured Ibero Data API can be imported: the
+   * server fetches the URL itself and forwards the download token to it.
+   */
+  private assertIberoUrl(url: string): void {
+    const base = iberoApiUrl();
+    if (!base) throw new BadRequestException('IBERO_API_URL is not configured');
+    if (!url.startsWith(`${base}/`)) throw new BadRequestException('Only Ibero Data files can be imported');
+  }
+
+  async importFromUrl(url: string, rawName: string, format: string, downloadToken?: string, username?: string): Promise<{ tableName: string; rowCount: number; skipped?: boolean }> {
+    const tableName = (rawName.replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 60) || 'ibero_data');
+    this.assertIberoUrl(url);
     const existing = await this.getTables();
     if (existing.includes(tableName)) {
       this.addTableOwner(tableName, username);
@@ -457,14 +469,14 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
     const urlExt = url.split('?')[0].split('.').pop()?.toLowerCase() ?? '';
     const resolvedFormat = urlExt === 'parquet' ? 'parquet' : (format === 'parquet' ? 'parquet' : 'csv');
     const ext = resolvedFormat === 'parquet' ? 'parquet' : 'csv';
-    const tmpPath = path.join(process.cwd(), 'uploads', `__ckan_${Date.now()}.${ext}`);
+    const tmpPath = path.join(process.cwd(), 'uploads', `__ibero_${Date.now()}.${ext}`);
 
     const headers: Record<string, string> = {};
-    if (ckanToken) headers['Authorization'] = ckanToken;
+    if (downloadToken) headers['Authorization'] = downloadToken;
 
     const res = await fetch(url, { headers });
     this.logger.log(`[importFromUrl] status=${res.status} content-type=${res.headers.get('content-type')} url=${url}`);
-    if (!res.ok) throw new BadRequestException(`cannot download the file from CKAN: HTTP ${res.status}`);
+    if (!res.ok) throw new BadRequestException(`cannot download the file from Ibero Data: HTTP ${res.status}`);
     const buffer = Buffer.from(await res.arrayBuffer());
     fs.mkdirSync(path.join(process.cwd(), 'uploads'), { recursive: true });
     fs.writeFileSync(tmpPath, buffer);

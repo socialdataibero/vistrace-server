@@ -8,7 +8,7 @@ const AI_GRAPH_TOOL_NAME = 'create_canvas_graph';
 const canvasGraphTool: Tool = {
   name: AI_GRAPH_TOOL_NAME,
   description:
-    'Return a graph plan for NEW canvas nodes and edges to create in VizCanvas. ' +
+    'Return a graph plan for NEW canvas nodes and edges to create in vistrace. ' +
     'Use empty nodes/edges when the user only wants an explanation or the request is too ambiguous.',
   input_schema: {
     type: 'object',
@@ -87,7 +87,7 @@ export class AiService {
   }
 
   private buildSystemPrompt(context?: AiChatDto['context']): string {
-    let system = `You are an AI data analyst assistant embedded in VizCanvas, a visual data analysis tool powered by DuckDB.
+    let system = `You are an AI data analyst assistant embedded in vistrace, a visual data analysis tool powered by DuckDB.
 
 You help users explore, transform, and visualize their data. You can:
 - Answer questions about the data and suggest SQL queries

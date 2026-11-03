@@ -64,17 +64,27 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
   private conn: duckdb.Connection;
 
   private readonly dataDir = path.join(process.cwd(), 'data');
-  private readonly dbPath = path.join(process.cwd(), 'data', 'vizcanvas.db');
+  private readonly dbPath = path.join(process.cwd(), 'data', 'vistrace.db');
   private readonly metaPath = path.join(process.cwd(), 'data', 'meta.json');
   private tableMeta = new Map<string, TableMeta>();
 
   async onModuleInit(): Promise<void> {
     fs.mkdirSync(this.dataDir, { recursive: true });
+    this.adoptLegacyDatabase();
     this.db = new duckdb.Database(this.dbPath);
     this.conn = this.db.connect();
     this.tableMeta = this.loadMeta();
     this.logger.log(`DuckDB inicializado con persistencia en ${this.dbPath}`);
     await this.lockDownDatabase();
+  }
+
+  // Servers deployed before the rename to vistrace keep their tables in data/vizcanvas.db.
+  private adoptLegacyDatabase(): void {
+    const legacyPath = path.join(this.dataDir, 'vizcanvas.db');
+    if (fs.existsSync(this.dbPath) || !fs.existsSync(legacyPath)) return;
+    fs.renameSync(legacyPath, this.dbPath);
+    if (fs.existsSync(`${legacyPath}.wal`)) fs.renameSync(`${legacyPath}.wal`, `${this.dbPath}.wal`);
+    this.logger.log(`Renamed legacy database ${legacyPath} to ${this.dbPath}`);
   }
 
   private async lockDownDatabase(): Promise<void> {

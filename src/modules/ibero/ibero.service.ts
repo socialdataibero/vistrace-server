@@ -23,7 +23,7 @@ export class IberoService {
     if (dto.visibility) form.append('visibility', dto.visibility);
     form.append('recipe', JSON.stringify(dto.recipe));
 
-    const base = `${apiUrl}/organizations/${dto.organizationId}/datasets/${dto.datasetId}/analyses/vizcanvas`;
+    const base = `${apiUrl}/organizations/${dto.organizationId}/datasets/${dto.datasetId}/analyses/vistrace`;
     const endpoint = dto.analysisId ? `${base}/${dto.analysisId}` : base;
 
     let res: Response;

@@ -1,8 +1,8 @@
-# VizCanvas — Guía de integración para frontends externos
+# vistrace — Guía de integración para frontends externos
 
-Este documento describe cómo consumir la API de VizCanvas desde cualquier frontend: React, Vue, Svelte, Observable Framework, o cualquier cliente HTTP.
+Este documento describe cómo consumir la API de vistrace desde cualquier frontend: React, Vue, Svelte, Observable Framework, o cualquier cliente HTTP.
 
-> **Arquitectura:** El servidor VizCanvas maneja todo el procesamiento de datos en el backend — subida de archivos, gestión de tablas, ejecución de SQL (DuckDB) y el chat con IA (Claude). El cliente no necesita procesar datos localmente.
+> **Arquitectura:** El servidor vistrace maneja todo el procesamiento de datos en el backend — subida de archivos, gestión de tablas, ejecución de SQL (DuckDB) y el chat con IA (Claude). El cliente no necesita procesar datos localmente.
 
 ---
 
@@ -363,7 +363,7 @@ async function getProfile() {
 ## 8. Cliente completo reutilizable
 
 ```js
-class VizCanvasClient {
+class VistraceClient {
   constructor(baseUrl = "http://localhost:3001") {
     this.api = `${baseUrl}/api`;
     this.token = null;
@@ -458,7 +458,7 @@ class VizCanvasClient {
 }
 
 // Uso
-const vz = new VizCanvasClient("http://localhost:3001");
+const vz = new VistraceClient("http://localhost:3001");
 
 await vz.upload(myFile);
 const tables = await vz.tables();
@@ -477,7 +477,7 @@ const { reply, plan } = await vz.chat(
 
 `src/data/tables.json.js`
 ```js
-const res = await fetch(`${process.env.VIZCANVAS_URL}/api/tables`);
+const res = await fetch(`${process.env.VISTRACE_URL}/api/tables`);
 process.stdout.write(await res.text());
 ```
 
@@ -550,7 +550,7 @@ async function safeQuery(sql) {
 
     return res.json();
   } catch (e) {
-    console.error("VizCanvas API error:", e.message);
+    console.error("vistrace API error:", e.message);
     throw e;
   }
 }

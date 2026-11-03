@@ -1,4 +1,4 @@
-# VizCanvas — Arquitectura del sistema
+# vistrace — Arquitectura del sistema
 
 ## Diagrama general
 
@@ -96,7 +96,7 @@
 │         │  · soporta CSV · TSV · JSON · JSONL · Parquet             │       │
 │         │    GeoJSON · TopoJSON                                     │       │
 │         │  · devuelve 250 rows (preview) + totalRows                │       │
-│         │  · persistencia en data/vizcanvas.db                      │       │
+│         │  · persistencia en data/vistrace.db                      │       │
 │         │  · metadata en data/meta.json                             │       │
 │         │  · archivos físicos en uploads/                           │       │
 │         └───────────────────────────────────────────────────────────┘       │
@@ -168,7 +168,7 @@ El corazón del procesamiento de datos en el cliente. Cuando el grafo cambia, el
 DuckDB corre en el servidor NestJS, no en el browser.
 
 - **Lectura nativa:** CSV, TSV, JSON, JSONL, Parquet, GeoJSON, TopoJSON
-- **Persistencia:** Base de datos en disco `data/vizcanvas.db` — sobrevive reinicios del servidor
+- **Persistencia:** Base de datos en disco `data/vistrace.db` — sobrevive reinicios del servidor
 - **Metadata:** `data/meta.json` guarda nombre original, tipo y tamaño de cada tabla
 - **Preview:** Devuelve hasta 250 filas por consulta + `totalRows` para paginación
 - **Archivos físicos:** Guardados en `uploads/` con el nombre original sanitizado
@@ -239,7 +239,7 @@ Los datos de las tablas viven en el servidor (DuckDB + `uploads/`). El canvas se
 ## Flujo completo de una sesión típica
 
 ```
-1. Usuario abre VizCanvas en el browser
+1. Usuario abre vistrace en el browser
         │
         ▼
 2. Se restaura el canvas desde localStorage

@@ -1,6 +1,7 @@
 import { UpdateProfileDto } from './dto/update-user.dto';
 
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -64,21 +65,23 @@ export class UsersController {
     @Req() req,
     @Body() updateData: UpdateProfileDto
   ) {
-    const identifier = req.user.username;
-    return this.service.updateProfile(identifier, updateData);
+    if (req.user.source === 'ibero') {
+      throw new BadRequestException('PROFILE_MANAGED_BY_IBERO');
+    }
+    return this.service.updateProfile(req.user.username, updateData);
   }
 
-  // @ApiBearerAuth()
-  // @UseGuards(JwtAuthGuard, RolesGuard)
-  // @Roles(UserRoleEnum.ADMIN)
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.ADMIN)
   @Get()
   findAll(@Query() query: PaginationDto) {
     return this.service.findAll(query);
   }
 
-  // @ApiBearerAuth()
-  // @UseGuards(JwtAuthGuard, RolesGuard)
-  // @Roles(UserRoleEnum.ADMIN)
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRoleEnum.ADMIN)
   @Patch(':id')
   updateUserAccess(
     @Param('id') id: string,

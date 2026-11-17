@@ -50,6 +50,13 @@ export class UsersService {
       );
     }
 
+    if (user.isActive === false) {
+      throw new HttpException(
+        { message: ['ACCOUNT_SUSPENDED'] },
+        HttpStatus.FORBIDDEN,
+      );
+    }
+
     return this.auth(user);
   }
 

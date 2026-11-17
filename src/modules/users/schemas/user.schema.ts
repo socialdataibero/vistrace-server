@@ -18,7 +18,7 @@ export class User {
   @Prop({ enum: UserRoleEnum, default: UserRoleEnum.USER })
   role!: UserRoleEnum;
 
-  @Prop({ default: false })
+  @Prop({ default: true })
   isActive!: boolean;
 
   @Prop()

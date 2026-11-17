@@ -9,8 +9,9 @@ export class IberoService {
 
   constructor(private readonly duckdb: DuckdbService) {}
 
-  async publishAnalysis(dto: PublishAnalysisDto): Promise<unknown> {
+  async publishAnalysis(dto: PublishAnalysisDto, username: string): Promise<unknown> {
     const apiUrl = this.resolveApiUrl(dto.apiUrl);
+    await this.duckdb.assertQueryAccess(dto.sql, username);
     const parquet = await this.duckdb.exportQueryToParquet(dto.sql);
 
     const form = new FormData();

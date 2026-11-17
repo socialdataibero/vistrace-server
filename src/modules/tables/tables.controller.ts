@@ -5,7 +5,6 @@ import {
   Get,
   HttpCode,
   HttpStatus,
-  NotFoundException,
   Param,
   Post,
   Req,
@@ -53,22 +52,21 @@ export class TablesController {
   }
 
   @Get(':name/schema')
-  async getSchema(@Param('name') name: string) {
-    const tables = await this.duckdb.getTables();
-    if (!tables.includes(name)) throw new NotFoundException(`Tabla no encontrada: ${name}`);
+  async getSchema(@Req() req, @Param('name') name: string) {
+    await this.duckdb.assertOwnsTable(name, req.user.username);
     return this.duckdb.getTableSchema(name);
   }
 
   @Get(':name/export')
-  async exportTable(@Param('name') name: string) {
-    const tables = await this.duckdb.getTables();
-    if (!tables.includes(name)) throw new NotFoundException(`Tabla no encontrada: ${name}`);
+  async exportTable(@Req() req, @Param('name') name: string) {
+    await this.duckdb.assertOwnsTable(name, req.user.username);
     return this.duckdb.exportTableData(name);
   }
 
   @Post('import')
   @HttpCode(HttpStatus.OK)
-  importTable(@Req() req, @Body() dto: ImportTableDto) {
+  async importTable(@Req() req, @Body() dto: ImportTableDto) {
+    await this.duckdb.assertCanReplace(dto.tableName, req.user.username);
     return this.duckdb.importTableData(dto.tableName, dto.rows, dto.columns, {
       owners: [req.user.username],
     });
@@ -83,8 +81,7 @@ export class TablesController {
   @Delete(':name')
   @HttpCode(HttpStatus.NO_CONTENT)
   async dropTable(@Req() req, @Param('name') name: string) {
-    const tables = await this.duckdb.getTables();
-    if (!tables.includes(name)) throw new NotFoundException(`Table not found: ${name}`);
+    await this.duckdb.assertOwnsTable(name, req.user.username);
     await this.duckdb.dropTable(name, req.user.username);
   }
 

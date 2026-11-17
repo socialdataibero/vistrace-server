@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import * as duckdb from 'duckdb';
 import * as fs from 'fs';
 import * as readline from 'readline';
@@ -6,6 +6,8 @@ import * as path from 'path';
 import { feature as topoFeature } from 'topojson-client';
 import { assertEmbeddableSql } from '../query/read-only-sql';
 import { iberoApiUrl } from '../ibero/ibero-api-url';
+import { collectSqlReferences } from './sql-references';
+import { isPublicVisitor, PUBLIC_VISITOR_SWEEP_MS, PUBLIC_VISITOR_TTL_MS } from '../../shared/auth/public-visitor';
 
 export interface ColumnInfo {
   name: string;
@@ -54,6 +56,9 @@ export interface TableMeta {
   fileSize?: number;
   fileType?: string;
   originalName?: string;
+  sourceUrl?: string;
+  storedFile?: string;
+  createdAt?: number;
   owners?: string[];
 }
 
@@ -76,6 +81,20 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
     this.tableMeta = this.loadMeta();
     this.logger.log(`DuckDB inicializado con persistencia en ${this.dbPath}`);
     await this.lockDownDatabase();
+    setInterval(() => void this.dropExpiredVisitorTables(), PUBLIC_VISITOR_SWEEP_MS).unref();
+  }
+
+  async dropExpiredVisitorTables(now = Date.now()): Promise<string[]> {
+    const expired = [...this.tableMeta.entries()]
+      .filter(([, m]) => (m.owners ?? []).length > 0 && m.owners!.every(isPublicVisitor))
+      .filter(([, m]) => now - (m.createdAt ?? 0) > PUBLIC_VISITOR_TTL_MS)
+      .map(([name]) => name);
+    for (const name of expired) {
+      await this.runAsync(`DROP TABLE IF EXISTS "${name.replace(/"/g, '""')}"`);
+      this.tableMeta.delete(name);
+    }
+    if (expired.length > 0) this.saveMeta();
+    return expired;
   }
 
   // Servers deployed before the rename to vistrace keep their tables in data/vizcanvas.db.
@@ -240,18 +259,51 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
   private isVisibleTo(tableName: string, username?: string): boolean {
     if (!username) return true;
     const owners = this.tableMeta.get(tableName)?.owners;
-    if (!owners || owners.length === 0) return true;
-    return owners.includes(username);
+    return !!owners?.includes(username);
   }
 
-  addTableOwner(tableName: string, username?: string): void {
-    if (!username) return;
-    const meta = this.tableMeta.get(tableName) ?? {};
-    const owners = meta.owners ?? [];
-    if (!owners.includes(username)) {
-      this.tableMeta.set(tableName, { ...meta, owners: [...owners, username] });
-      this.saveMeta();
+  async assertQueryAccess(sql: string, username: string): Promise<void> {
+    const literal = sql.replace(/'/g, "''");
+    const rows = await this.allAsync(`SELECT json_serialize_sql('${literal}') AS j`);
+    const refs = collectSqlReferences(String(rows[0]?.['j'] ?? '{"error":true}'));
+    if (refs.forbidden.length > 0) {
+      throw new BadRequestException(`Consulta no permitida: ${refs.forbidden.join(', ')}`);
     }
+    const existing = new Map((await this.getTables()).map((t) => [t.toLowerCase(), t]));
+    for (const name of refs.tables) {
+      const table = existing.get(name);
+      if (table && !this.isVisibleTo(table, username)) {
+        throw new ForbiddenException(`No tienes acceso a la tabla ${table}`);
+      }
+    }
+  }
+
+  async assertOwnsTable(tableName: string, username: string): Promise<void> {
+    const tables = await this.getTables();
+    if (!tables.includes(tableName) || !this.isVisibleTo(tableName, username)) {
+      throw new NotFoundException(`Tabla no encontrada: ${tableName}`);
+    }
+  }
+
+  async assertCanReplace(tableName: string, username: string): Promise<void> {
+    const tables = await this.getTables();
+    if (!tables.includes(tableName)) return;
+    const owners = this.tableMeta.get(tableName)?.owners ?? [];
+    if (owners.length !== 1 || owners[0] !== username) {
+      throw new ConflictException(`El nombre de tabla ${tableName} ya está en uso`);
+    }
+  }
+
+  storedFilesOf(username: string): string[] {
+    return [...this.tableMeta.values()]
+      .filter((m) => m.storedFile && m.owners?.includes(username))
+      .map((m) => m.storedFile as string);
+  }
+
+  tablesForStoredFile(storedFile: string, username?: string): string[] {
+    return [...this.tableMeta.entries()]
+      .filter(([, m]) => m.storedFile === storedFile && (!username || m.owners?.includes(username)))
+      .map(([name]) => name);
   }
 
   async getTablesWithMeta(username?: string): Promise<
@@ -275,6 +327,14 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
         };
       }),
     );
+  }
+
+  private reusableIberoTable(sourceUrl: string, username?: string): string | null {
+    if (!username) return null;
+    const match = [...this.tableMeta.entries()].find(
+      ([, m]) => m.sourceUrl === sourceUrl && m.owners?.length === 1 && m.owners[0] === username,
+    );
+    return match?.[0] ?? null;
   }
 
   async resolveTableName(baseName: string): Promise<string> {
@@ -344,7 +404,7 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
 
   async dropTable(tableName: string, username?: string): Promise<void> {
     if (!this.isVisibleTo(tableName, username)) {
-      throw new BadRequestException(`No tienes acceso a la tabla: ${tableName}`);
+      throw new NotFoundException(`Tabla no encontrada: ${tableName}`);
     }
     const owners = this.tableMeta.get(tableName)?.owners ?? [];
     if (username && owners.length > 1) {
@@ -464,17 +524,11 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
     if (!url.startsWith(`${base}/`)) throw new BadRequestException('Only Ibero Data files can be imported');
   }
 
-  async importFromUrl(url: string, rawName: string, format: string, downloadToken?: string, username?: string): Promise<{ tableName: string; rowCount: number; skipped?: boolean }> {
-    const tableName = (rawName.replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 60) || 'ibero_data');
+  async importFromUrl(url: string, rawName: string, format: string, downloadToken?: string, username?: string): Promise<{ tableName: string; rowCount: number }> {
+    const baseName = (rawName.replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 60) || 'ibero_data');
     this.assertIberoUrl(url);
-    const existing = await this.getTables();
-    if (existing.includes(tableName)) {
-      this.addTableOwner(tableName, username);
-      const safeExisting = tableName.replace(/"/g, '""');
-      const countRows = await this.allAsync(`SELECT COUNT(*) AS cnt FROM "${safeExisting}"`);
-      this.logger.log(`[importFromUrl] "${tableName}" already exists — skipping download`);
-      return { tableName, rowCount: Number(countRows[0]?.['cnt'] ?? 0), skipped: true };
-    }
+    const sourceUrl = url.split('?')[0];
+    const tableName = this.reusableIberoTable(sourceUrl, username) ?? (await this.resolveTableName(baseName));
 
     const urlExt = url.split('?')[0].split('.').pop()?.toLowerCase() ?? '';
     const resolvedFormat = urlExt === 'parquet' ? 'parquet' : (format === 'parquet' ? 'parquet' : 'csv');
@@ -507,8 +561,10 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
     const countRows = await this.allAsync(`SELECT COUNT(*) AS cnt FROM "${safe}"`);
     const rowCount = Number(countRows[0]?.['cnt'] ?? 0);
     this.tableMeta.set(tableName, {
+      createdAt: Date.now(),
       fileType: resolvedFormat,
       originalName: rawName,
+      sourceUrl,
       ...(username ? { owners: [username] } : {}),
     });
     this.saveMeta();

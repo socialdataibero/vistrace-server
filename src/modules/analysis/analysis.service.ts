@@ -20,8 +20,8 @@ export interface SuggestedMapFlow {
 export class AnalysisService {
   constructor(private readonly duckdb: DuckdbService) { }
 
-  async getMapFlows(tableName?: string): Promise<SuggestedMapFlow[]> {
-    const allTables = await this.duckdb.getTablesWithMeta();
+  async getMapFlows(username: string, tableName?: string): Promise<SuggestedMapFlow[]> {
+    const allTables = await this.duckdb.getTablesWithMeta(username);
 
     const geoTables = allTables.filter((t) => t.columns.some((c) => (c.role ?? inferColumnRole(c.name, c.type)) === 'geometry'));
     const dataTables = allTables.filter((t) => !t.columns.some((c) => (c.role ?? inferColumnRole(c.name, c.type)) === 'geometry'));

@@ -20,6 +20,7 @@ import { diskStorage } from 'multer';
 import { JwtAuthGuard } from '../../shared/auth/jwt-auth.guard';
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 import { FilesService } from './files.service';
 import { DuckdbService } from '../duckdb/duckdb.service';
 
@@ -35,7 +36,7 @@ function buildStorage(uploadsDir: string) {
     },
     filename: (_req, file, cb) => {
       const safe = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
-      cb(null, safe);
+      cb(null, `${Date.now()}-${randomUUID().slice(0, 8)}-${safe}`);
     },
   });
 }
@@ -88,7 +89,7 @@ export class FilesController {
       file.path,
       tableName,
       ext,
-      { fileSize: file.size, fileType: ext, originalName: file.originalname, owners: [req.user.username] },
+      { fileSize: file.size, fileType: ext, originalName: file.originalname, storedFile: file.filename, owners: [req.user.username] },
     );
 
     return {
@@ -129,7 +130,7 @@ export class FilesController {
           file.path,
           tableName,
           ext,
-          { fileSize: file.size, fileType: ext, originalName: file.originalname, owners: [req.user.username] },
+          { fileSize: file.size, fileType: ext, originalName: file.originalname, storedFile: file.filename, owners: [req.user.username] },
         );
 
         return {
@@ -147,26 +148,23 @@ export class FilesController {
   }
 
   @Get()
-  listFiles() {
-    return this.filesService.listFiles();
+  listFiles(@Req() req) {
+    const mine = new Set(this.duckdb.storedFilesOf(req.user.username));
+    return this.filesService.listFiles().filter((f) => mine.has(f.filename));
   }
 
   @Delete(':filename')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async deleteFile(@Param('filename') filename: string) {
-    if (!this.filesService.deleteFile(filename)) {
+  async deleteFile(@Req() req, @Param('filename') filename: string) {
+    const tables = this.duckdb.tablesForStoredFile(filename, req.user.username);
+    if (tables.length === 0) {
       throw new NotFoundException(`Archivo no encontrado: ${filename}`);
     }
-    const baseName = path.basename(filename, path.extname(filename))
-      .replace(/[^a-zA-Z0-9_]/g, '_')
-      .replace(/^_+|_+$/g, '')
-      .toLowerCase() || 'uploaded_data';
-    const tables = await this.duckdb.getTables();
-    const toDelete = tables.filter(
-      (t) => t === baseName || t.match(new RegExp(`^${baseName}_\\d+$`)),
-    );
-    for (const t of toDelete) {
-      await this.duckdb.dropTable(t);
+    for (const t of tables) {
+      await this.duckdb.dropTable(t, req.user.username);
+    }
+    if (this.duckdb.tablesForStoredFile(filename).length === 0) {
+      this.filesService.deleteFile(filename);
     }
   }
 }

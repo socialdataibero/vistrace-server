@@ -30,6 +30,7 @@ export class ConfigService {
   }
 
   public getMongoConfig() {
+    if (process.env.MONGO_URI) return { uri: process.env.MONGO_URI };
     const user = encodeURIComponent(this.get(EnvKeys.MONGO_USER));
     const password = encodeURIComponent(this.get(EnvKeys.MONGO_PASSWORD));
     const host = this.get(EnvKeys.MONGO_HOST);

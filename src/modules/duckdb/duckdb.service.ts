@@ -213,6 +213,8 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
   }
 
   async executeQueryLimited(sql: string, limit = 250): Promise<QueryResult> {
+    // A final semicolon is valid in a statement but not inside the subquery below.
+    sql = sql.replace(/;\s*$/, '');
     const limitedSql = `SELECT * FROM (${sql}) AS _q LIMIT ${limit}`;
     const countSql = `SELECT COUNT(*) AS total FROM (${sql}) AS _q`;
 

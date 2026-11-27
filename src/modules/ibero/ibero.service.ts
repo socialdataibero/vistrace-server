@@ -58,7 +58,11 @@ export class IberoService {
     }
     const normalized = url.toString().replace(/\/+$/, '');
     const allowed = iberoApiUrl();
-    if (allowed && normalized !== allowed) {
+    // Without a configured Ibero Data URL there is nothing to check against, and the publish token must not go to an arbitrary host.
+    if (!allowed) {
+      throw new BadRequestException('IBERO_API_URL is not configured');
+    }
+    if (normalized !== allowed) {
       throw new BadRequestException('Ibero Data URL not allowed');
     }
     return normalized;

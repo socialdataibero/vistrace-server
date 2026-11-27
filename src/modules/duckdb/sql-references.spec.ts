@@ -20,10 +20,15 @@ describe('collectSqlReferences', () => {
     return collectSqlReferences(await serialize(sql));
   }
 
-  it('lists tables from joins, subqueries and CTE bodies, without the CTE names', async () => {
+  it('lists tables from joins, subqueries and CTE bodies, keeping CTE names', async () => {
     const r = await refs('WITH x AS (SELECT * FROM a) SELECT * FROM x JOIN b USING (id) WHERE id IN (SELECT id FROM c)');
-    expect(r.tables.sort()).toEqual(['a', 'b', 'c']);
+    expect(r.tables.sort()).toEqual(['a', 'b', 'c', 'x']);
     expect(r.forbidden).toEqual([]);
+  });
+
+  it('does not let a CTE named like a table hide that table in another scope', async () => {
+    const r = await refs('SELECT * FROM (WITH secret AS (SELECT 1) SELECT * FROM secret) a, secret');
+    expect(r.tables).toContain('secret');
   });
 
   it('lower-cases quoted table names', async () => {

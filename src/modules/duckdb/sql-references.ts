@@ -12,27 +12,23 @@ export function collectSqlReferences(serialized: string): SqlReferences {
   if (parsed.error) {
     return { tables: [], forbidden: [parsed.error_message ?? 'unparseable statement'] };
   }
-  const ctes = new Set<string>();
   const tables = new Set<string>();
   const forbidden = new Set<string>();
-  visit(parsed.statements ?? [], ctes, tables, forbidden);
+  visit(parsed.statements ?? [], tables, forbidden);
+  // CTE names are kept on purpose: a CTE named like a real table must not hide a reference to that table in another scope.
   return {
-    tables: [...tables].filter((t) => !ctes.has(t)),
+    tables: [...tables],
     forbidden: [...forbidden],
   };
 }
 
-function visit(value: unknown, ctes: Set<string>, tables: Set<string>, forbidden: Set<string>): void {
+function visit(value: unknown, tables: Set<string>, forbidden: Set<string>): void {
   if (Array.isArray(value)) {
-    for (const item of value) visit(item, ctes, tables, forbidden);
+    for (const item of value) visit(item, tables, forbidden);
     return;
   }
   if (!value || typeof value !== 'object') return;
   const node = value as Record<string, unknown>;
-  const cteMap = node['cte_map'] as { map?: { key?: string }[] } | undefined;
-  for (const entry of cteMap?.map ?? []) {
-    if (entry.key) ctes.add(entry.key.toLowerCase());
-  }
   if (isTableRef(node)) {
     const type = node['type'] as string;
     if (!ALLOWED_REF_TYPES.has(type)) {
@@ -48,7 +44,7 @@ function visit(value: unknown, ctes: Set<string>, tables: Set<string>, forbidden
       }
     }
   }
-  for (const child of Object.values(node)) visit(child, ctes, tables, forbidden);
+  for (const child of Object.values(node)) visit(child, tables, forbidden);
 }
 
 function isTableRef(node: Record<string, unknown>): boolean {

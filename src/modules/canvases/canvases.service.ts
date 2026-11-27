@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ConflictException, HttpException, HttpStatus, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { CanvasState } from './canvas-state.schema';
@@ -38,15 +38,21 @@ export class CanvasesService implements OnModuleInit {
     };
   }
 
-  async saveMine(username: string, workspace: string | null, state: Record<string, unknown>) {
+  async saveMine(username: string, workspace: string | null, state: Record<string, unknown>, baseSavedAt?: string) {
+    const key = this.key(username, workspace);
     try {
-      const doc = await this.model.findOneAndUpdate(
-        this.key(username, workspace),
-        { $set: { state } },
-        { returnDocument: 'after', upsert: true },
-      ).exec();
+      // With a base version only that exact version is replaced (no upsert); without one, the legacy last-write-wins upsert.
+      const doc = baseSavedAt
+        ? await this.model.findOneAndUpdate(
+          { ...key, updatedAt: new Date(baseSavedAt) },
+          { $set: { state } },
+          { returnDocument: 'after' },
+        ).exec()
+        : await this.model.findOneAndUpdate(key, { $set: { state } }, { returnDocument: 'after', upsert: true }).exec();
+      if (!doc) throw new ConflictException('CANVAS_CHANGED');
       return { savedAt: (doc as unknown as { updatedAt?: Date }).updatedAt ?? new Date() };
     } catch (error: any) {
+      if (error instanceof ConflictException) throw error;
       this.logger.error(error);
       throw new HttpException(
         { message: ['ERROR_SAVING_CANVAS'] },

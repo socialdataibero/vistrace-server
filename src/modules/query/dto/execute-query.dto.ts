@@ -1,4 +1,7 @@
-import { IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+
+// A whole result is held in server memory and sent as JSON; past this a query must aggregate or page.
+export const MAX_QUERY_ROWS = 50_000;
 
 export class ExecuteQueryDto {
   @IsString()
@@ -10,7 +13,8 @@ export class ExecuteQueryLimitedDto {
   sql: string;
 
   @IsOptional()
-  @IsNumber()
+  @IsInt()
   @Min(1)
+  @Max(MAX_QUERY_ROWS)
   limit?: number;
 }

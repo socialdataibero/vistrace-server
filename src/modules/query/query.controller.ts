@@ -1,6 +1,6 @@
 import { Body, Controller, HttpCode, HttpStatus, Post, Req, UseGuards } from '@nestjs/common';
 import { DuckdbService } from '../duckdb/duckdb.service';
-import { ExecuteQueryDto, ExecuteQueryLimitedDto } from './dto/execute-query.dto';
+import { ExecuteQueryDto, ExecuteQueryLimitedDto, MAX_QUERY_ROWS } from './dto/execute-query.dto';
 import { JwtAuthGuard } from '../../shared/auth/jwt-auth.guard';
 import { assertReadOnlySql } from './read-only-sql';
 
@@ -14,7 +14,7 @@ export class QueryController {
   async execute(@Req() req, @Body() dto: ExecuteQueryDto) {
     assertReadOnlySql(dto.sql);
     await this.duckdb.assertQueryAccess(dto.sql, req.user.username);
-    return this.duckdb.executeQuery(dto.sql);
+    return this.duckdb.executeQueryLimited(dto.sql, MAX_QUERY_ROWS);
   }
 
   @Post('execute-limited')

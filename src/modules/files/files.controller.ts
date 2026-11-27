@@ -83,14 +83,18 @@ export class FilesController {
       .replace(/^_+|_+$/g, '')
       .toLowerCase() || 'uploaded_data';
 
-    const tableName = await this.duckdb.resolveTableName(baseName);
+    const tableName = await this.duckdb.resolveTableName(baseName, req.user.username);
 
     const { columns, rowCount } = await this.duckdb.loadFileFromDisk(
       file.path,
       tableName,
       ext,
-      { fileSize: file.size, fileType: ext, originalName: file.originalname, storedFile: file.filename, owners: [req.user.username] },
-    );
+      { createdAt: Date.now(), fileSize: file.size, fileType: ext, originalName: file.originalname, storedFile: file.filename, owners: [req.user.username] },
+    ).catch((err) => {
+      // A file that did not load into a table would never be listed or deleted again.
+      fs.rmSync(file.path, { force: true });
+      throw err;
+    });
 
     return {
       originalName: file.originalname,
@@ -124,14 +128,18 @@ export class FilesController {
           .replace(/^_+|_+$/g, '')
           .toLowerCase() || 'uploaded_data';
 
-        const tableName = await this.duckdb.resolveTableName(baseName);
+        const tableName = await this.duckdb.resolveTableName(baseName, req.user.username);
 
         const { columns, rowCount } = await this.duckdb.loadFileFromDisk(
           file.path,
           tableName,
           ext,
-          { fileSize: file.size, fileType: ext, originalName: file.originalname, storedFile: file.filename, owners: [req.user.username] },
-        );
+          { createdAt: Date.now(), fileSize: file.size, fileType: ext, originalName: file.originalname, storedFile: file.filename, owners: [req.user.username] },
+        ).catch((err) => {
+          // A file that did not load into a table would never be listed or deleted again.
+          fs.rmSync(file.path, { force: true });
+          throw err;
+        });
 
         return {
           originalName: file.originalname,

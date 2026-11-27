@@ -3,6 +3,7 @@ import * as duckdb from 'duckdb';
 import * as fs from 'fs';
 import * as readline from 'readline';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 import { feature as topoFeature } from 'topojson-client';
 import { assertEmbeddableSql } from '../query/read-only-sql';
 import { iberoApiUrl } from '../ibero/ibero-api-url';
@@ -72,6 +73,9 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
   private readonly dbPath = path.join(process.cwd(), 'data', 'vistrace.db');
   private readonly metaPath = path.join(process.cwd(), 'data', 'meta.json');
   private tableMeta = new Map<string, TableMeta>();
+  // Lower-cased table names handed out but maybe not created yet, so two concurrent uploads never get the same name.
+  // shortcut: never released (a failed load keeps its name until restart), fine while names stay few.
+  private readonly reservedNames = new Map<string, string | undefined>();
 
   async onModuleInit(): Promise<void> {
     fs.mkdirSync(this.dataDir, { recursive: true });
@@ -91,7 +95,10 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
       .map(([name]) => name);
     for (const name of expired) {
       await this.runAsync(`DROP TABLE IF EXISTS "${name.replace(/"/g, '""')}"`);
+      const storedFile = this.tableMeta.get(name)?.storedFile;
       this.tableMeta.delete(name);
+      this.reservedNames.delete(name.toLowerCase());
+      this.removeStoredFileIfUnused(storedFile);
     }
     if (expired.length > 0) this.saveMeta();
     return expired;
@@ -135,10 +142,10 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
   }
 
   private saveMeta(): void {
-    fs.writeFileSync(
-      this.metaPath,
-      JSON.stringify(Object.fromEntries(this.tableMeta), null, 2),
-    );
+    // Write then rename: a crash mid-write must not leave a truncated meta.json that drops every owner.
+    const tmp = `${this.metaPath}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(Object.fromEntries(this.tableMeta), null, 2));
+    fs.renameSync(tmp, this.metaPath);
   }
 
   private runAsync(sql: string): Promise<void> {
@@ -288,10 +295,18 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
   }
 
   async assertCanReplace(tableName: string, username: string): Promise<void> {
-    const tables = await this.getTables();
-    if (!tables.includes(tableName)) return;
-    const owners = this.tableMeta.get(tableName)?.owners ?? [];
-    if (owners.length !== 1 || owners[0] !== username) {
+    const key = tableName.toLowerCase();
+    // DuckDB names are case-insensitive: "Datos" and "datos" are the same table.
+    const existing = (await this.getTables()).find((t) => t.toLowerCase() === key);
+    if (!existing) {
+      if (this.reservedNames.has(key) && this.reservedNames.get(key) !== username) {
+        throw new ConflictException(`El nombre de tabla ${tableName} ya está en uso`);
+      }
+      this.reservedNames.set(key, username);
+      return;
+    }
+    const owners = this.tableMeta.get(existing)?.owners ?? [];
+    if (existing !== tableName || owners.length !== 1 || owners[0] !== username) {
       throw new ConflictException(`El nombre de tabla ${tableName} ya está en uso`);
     }
   }
@@ -339,14 +354,16 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
     return match?.[0] ?? null;
   }
 
-  async resolveTableName(baseName: string): Promise<string> {
-    const existing = await this.getTables();
+  async resolveTableName(baseName: string, username?: string): Promise<string> {
+    const existing = new Set((await this.getTables()).map((t) => t.toLowerCase()));
+    // No await below: checking and reserving the name happen in one step.
     let name = baseName;
     let suffix = 1;
-    while (existing.includes(name)) {
+    while (existing.has(name.toLowerCase()) || this.reservedNames.has(name.toLowerCase())) {
       name = `${baseName}_${suffix}`;
       suffix++;
     }
+    this.reservedNames.set(name.toLowerCase(), username);
     return name;
   }
 
@@ -417,8 +434,17 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
     }
     const safe = tableName.replace(/"/g, '""');
     await this.runAsync(`DROP TABLE IF EXISTS "${safe}"`);
+    const storedFile = this.tableMeta.get(tableName)?.storedFile;
     this.tableMeta.delete(tableName);
+    this.reservedNames.delete(tableName.toLowerCase());
     this.saveMeta();
+    this.removeStoredFileIfUnused(storedFile);
+  }
+
+  // The uploaded file is only the source of its tables: once none of them is left it is dead weight on disk.
+  private removeStoredFileIfUnused(storedFile?: string): void {
+    if (!storedFile || this.tablesForStoredFile(storedFile).length > 0) return;
+    fs.rmSync(path.join(process.cwd(), 'uploads', path.basename(storedFile)), { force: true });
   }
 
   async clearAllTables(username?: string): Promise<void> {
@@ -464,7 +490,7 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
       return { columns, rows: [], rowCount: total, dataEmbedded: false };
     }
 
-    const tmpPath = path.join(process.cwd(), 'uploads', `__export_${Date.now()}.ndjson`);
+    const tmpPath = path.join(process.cwd(), 'uploads', `__export_${randomUUID()}.ndjson`);
     const safeTmp = tmpPath.replace(/\\/g, '/').replace(/'/g, "''");
     try {
       await this.runAsync(`COPY "${safe}" TO '${safeTmp}' (FORMAT JSON)`);
@@ -486,15 +512,14 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
     meta?: TableMeta,
   ): Promise<{ columns: ColumnInfo[]; rowCount: number }> {
     const safe = tableName.replace(/"/g, '""');
-    await this.runAsync(`DROP TABLE IF EXISTS "${safe}"`);
-
+    // CREATE OR REPLACE only: if the new data fails to load, the old table is kept.
     if (rows.length === 0) {
       const colDefs = columns
         .map((c) => `"${c.name.replace(/"/g, '""')}" ${normalizeDuckDBType(c.type)}`)
         .join(', ');
-      await this.runAsync(`CREATE TABLE "${safe}" (${colDefs})`);
+      await this.runAsync(`CREATE OR REPLACE TABLE "${safe}" (${colDefs})`);
     } else {
-      const tmpPath = path.join(process.cwd(), 'uploads', `__tmp_${Date.now()}.json`);
+      const tmpPath = path.join(process.cwd(), 'uploads', `__tmp_${randomUUID()}.json`);
       fs.writeFileSync(tmpPath, JSON.stringify(rows));
       try {
         const safeTmp = tmpPath.replace(/\\/g, '/').replace(/'/g, "''");
@@ -530,12 +555,12 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
     const baseName = (rawName.replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 60) || 'ibero_data');
     this.assertIberoUrl(url);
     const sourceUrl = url.split('?')[0];
-    const tableName = this.reusableIberoTable(sourceUrl, username) ?? (await this.resolveTableName(baseName));
+    const tableName = this.reusableIberoTable(sourceUrl, username) ?? (await this.resolveTableName(baseName, username));
 
     const urlExt = url.split('?')[0].split('.').pop()?.toLowerCase() ?? '';
     const resolvedFormat = urlExt === 'parquet' ? 'parquet' : (format === 'parquet' ? 'parquet' : 'csv');
     const ext = resolvedFormat === 'parquet' ? 'parquet' : 'csv';
-    const tmpPath = path.join(process.cwd(), 'uploads', `__ibero_${Date.now()}.${ext}`);
+    const tmpPath = path.join(process.cwd(), 'uploads', `__ibero_${randomUUID()}.${ext}`);
 
     const headers: Record<string, string> = {};
     if (downloadToken) headers['Authorization'] = downloadToken;
@@ -574,7 +599,7 @@ export class DuckdbService implements OnModuleInit, OnModuleDestroy {
   }
 }
 
-function normalizeDuckDBType(type: string): string {
+export function normalizeDuckDBType(type: string): string {
   const t = (type ?? '').trim().toUpperCase();
   if (/^DATE/.test(t)) return 'DATE';
   if (/^TIMESTAMP/.test(t)) return 'TIMESTAMP';
@@ -588,7 +613,10 @@ function normalizeDuckDBType(type: string): string {
   if (/^(INT8|TINYINT)/.test(t)) return 'TINYINT';
   if (/^(UINT64|UBIGINT)/.test(t)) return 'UBIGINT';
   if (/^(UINT32|UINTEGER)/.test(t)) return 'UINTEGER';
-  if (/^(DECIMAL|NUMERIC)/.test(t)) return type.toUpperCase();
+  // The type string comes from the client and goes into DDL, so only an exact DECIMAL(p[,s]) passes through.
+  const decimal = /^(?:DECIMAL|NUMERIC)\s*\(\s*(\d{1,2})\s*(?:,\s*(\d{1,2})\s*)?\)$/.exec(t);
+  if (decimal) return `DECIMAL(${decimal[1]}${decimal[2] !== undefined ? `,${decimal[2]}` : ''})`;
+  if (/^(DECIMAL|NUMERIC)/.test(t)) return 'DOUBLE';
   if (/^(JSON|STRUCT|MAP|LIST|ARRAY)/.test(t)) return 'JSON';
   if (/^(BLOB|BINARY)/.test(t)) return 'BLOB';
   return 'VARCHAR';

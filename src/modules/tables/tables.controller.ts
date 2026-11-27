@@ -68,6 +68,7 @@ export class TablesController {
   async importTable(@Req() req, @Body() dto: ImportTableDto) {
     await this.duckdb.assertCanReplace(dto.tableName, req.user.username);
     return this.duckdb.importTableData(dto.tableName, dto.rows, dto.columns, {
+      createdAt: Date.now(),
       owners: [req.user.username],
     });
   }
